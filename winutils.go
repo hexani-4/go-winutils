@@ -14,7 +14,8 @@ const(
 )
 
 var(
-	user32             = syscall.MustLoadDLL("user32.dll")
+	user32                = syscall.MustLoadDLL("user32.dll")
+	shell32               = syscall.MustLoadDLL("shell32.dll")
 
 	procEnumWindows       *syscall.Proc
 	procGetWindowTextW    *syscall.Proc
@@ -123,7 +124,7 @@ func SetWindowPos(hwnd syscall.Handle, rect SIZE_RECT) (err error) {
 }
 
 func ErrorMessageNotification(message string) (err error) {
-	if procShell_NotifyIconW == nil { procShell_NotifyIconW = user32.MustFindProc("Shell_NotifyIconW") }
+	if procShell_NotifyIconW == nil { procShell_NotifyIconW = shell32.MustFindProc("Shell_NotifyIconW") }
 
 	// Initialize NOTIFYICONDATA
     var nid NOTIFYICONDATA
