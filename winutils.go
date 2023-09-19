@@ -161,10 +161,11 @@ func ErrorMessageNotification(message string) (err error) {
 func ErrorMessageBox(title string, message string) (err error) {
 	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") } //force a new push
 
-	utf16_title, err := syscall.UTF16FromString(title)
+	utf16_title, err := syscall.UTF16PtrFromString(title)
 	if err != nil { return err }
 
-	utf16_message, err := syscall.UTF16FromString(message)
+	utf16_message, err := syscall.UTF16PtrFromString(message)
+	if err != nil { return err }
 
 	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000))
 
