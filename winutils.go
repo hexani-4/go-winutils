@@ -165,11 +165,11 @@ func ErrorMessageBox(title string, message string) (err error) {
 	if err != nil { return err }
 
 	utf16_message, err := syscall.UTF16FromString(message)
-	if err != nil { return err }
 
-	_, _, err = syscall.SyscallN(procMessageBox.Addr(), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000))
+	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000))
 
-	return err
+	if success == 0 { return err }
+	return nil
 }
 
 //thx to EliCDavis (github)
