@@ -159,7 +159,7 @@ func ErrorMessageNotification(message string) (err error) {
 }
 
 func ErrorMessageBox(title string, message string) (err error) {
-	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") }
+	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") } //force a new push
 
 	utf16_title, err := syscall.UTF16FromString(title)
 	if err != nil { return err }
