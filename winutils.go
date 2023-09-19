@@ -2,6 +2,7 @@ package winutils
 
 import (
 	"fmt"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -27,22 +28,48 @@ var(
 	procShell_NotifyIconW *syscall.Proc
 )
 
+/*
+DWORD cbSize;
+  HWND  hWnd;
+  UINT  uID;
+  UINT  uFlags;
+  UINT  uCallbackMessage;
+  HICON hIcon;
+#if ...
+  CHAR  szTip[64];
+#else
+  CHAR  szTip[128];
+#endif
+  DWORD dwState;
+  DWORD dwStateMask;
+  CHAR  szInfo[256];
+  union {
+    UINT uTimeout;
+    UINT uVersion;
+  } DUMMYUNIONNAME;
+  CHAR  szInfoTitle[64];
+  DWORD dwInfoFlags;
+  GUID  guidItem;
+  HICON hBalloonIcon;
+*/
+
 type NOTIFYICONDATA struct {
-    CbSize           uint32
-    HWnd             syscall.Handle
-    UID              uint32
-    DwState          uint32
-    DwStateMask      uint32
-    SzInfo           [256]uint16
-    UVersion         uint32
-    SzInfoTitle      [64]uint16
-    DwInfoFlags      uint32
-    GuidItem         syscall.GUID
-    HIcon            syscall.Handle
-    SzTip            [128]uint16
-    DwFlags          uint32
-    DwCallbackMessage uint32
-    HBalloonIcon     syscall.Handle
+    CbSize           uint32 //The size of this structure, in bytes. 
+    HWnd             syscall.Handle //A handle to the window that receives notifications associated with an icon in the notification area. 
+    UID              uint32 //The application-defined identifier of the taskbar icon. The Shell uses either (hWnd plus uID) or guidItem to identify which icon to operate on when Shell_NotifyIcon is invoked. You can have multiple icons associated with a single hWnd by assigning each a different uID. If guidItem is specified, uID is ignored. 
+    UFlags           uint32 //Flags that either indicate which of the other members of the structure contain valid data or provide additional information to the tooltip as to how it should display. 
+    UCallbackMessage uint32 //An application-defined message identifier. The system uses this identifier to send notification messages to the window identified in hWnd. These notification messages are sent when a mouse event or hover occurs in the bounding rectangle of the icon, when the icon is selected or activated with the keyboard, or when those actions occur in the balloon notification. 
+	HIcon            syscall.Handle //A handle to the icon to be added, modified, or deleted. Windows XP and later support icons of up to 32 BPP. 
+	SzTip            [128]uint16 //A null-terminated string that specifies the text for a standard tooltip. It can have a maximum of 128 characters (! Windows 2000 and later !), including the terminating null character.
+	DwState          uint32 //Windows 2000 and later. The state of the icon. 
+	DwStateMask      uint32 //Windows 2000 and later. A value that specifies which bits of the dwState member are retrieved or modified. The possible values are the same as those for dwState. For example, setting this member to NIS_HIDDEN causes only the item's hidden state to be modified while the icon sharing bit is ignored regardless of its value. 
+    SzInfo           [256]uint16 //Windows 2000 and later. A null-terminated string that specifies the text to display in a balloon notification. It can have a maximum of 256 characters, including the terminating null character, but should be restricted to 200 characters in English to accommodate localization. To remove the balloon notification from the UI, either delete the icon (with NIM_DELETE) or set the NIF_INFO flag in uFlags and set szInfo to an empty string. 
+	UTimeout         uint32 //Deprecated. 
+	UVersion         uint32 //Deprecated. 
+    SzInfoTitle      [64]uint16 //Windows 2000 and later. A null-terminated string that specifies a title for a balloon notification. This title appears in a larger font immediately above the text. It can have a maximum of 64 characters, including the terminating null character, but should be restricted to 48 characters in English to accommodate localization. 
+    DwInfoFlags      uint32 //Windows 2000 and later. Flags that can be set to modify the behavior and appearance of a balloon notification. The icon is placed to the left of the title. If the szInfoTitle member is zero-length, the icon is not shown. 
+    GuidItem         syscall.GUID //Windows 7 and later: A registered GUID that identifies the icon. This value overrides uID and is the recommended method of identifying the icon. The NIF_GUID flag must be set in the uFlags member. 
+    HBalloonIcon     syscall.Handle //Windows Vista and later. The handle of a customized notification icon provided by the application that should be used independently of the notification area icon. If this member is non-NULL and the NIIF_USER flag is set in the dwInfoFlags member, this icon is used as the notification icon. If this member is NULL, the legacy behavior is carried out. 
 }
 
 type WINDOWINFO struct {
@@ -124,10 +151,12 @@ func SetWindowPos(hwnd syscall.Handle, rect SIZE_RECT) (err error) {
 }
 
 func ErrorMessageNotification(message string) (err error) {
+
+
 	if procShell_NotifyIconW == nil { procShell_NotifyIconW = shell32.MustFindProc("Shell_NotifyIconW") }
 
 	// Initialize NOTIFYICONDATA
-    var nid NOTIFYICONDATA
+    nid := &NOTIFYICONDATA{}
     nid.CbSize = uint32(unsafe.Sizeof(nid))
     nid.HWnd = syscall.Handle(0)
     nid.UID = 1 // Unique ID for the notification
@@ -148,28 +177,41 @@ func ErrorMessageNotification(message string) (err error) {
 	utf16_message, err := syscall.UTF16FromString(message)
 	if err != nil { return err }
 
-	nid.SzInfoTitle = [64]uint16(utf16_title)
-	nid.SzInfo = [256]uint16(utf16_message)
+	for i, c := range utf16_title {
+		nid.SzInfoTitle[min(i, 63)] = c
+	}
+	
+	for i, c := range utf16_message {
+		nid.SzInfoTitle[min(i, 255)] = c
+	}
 
     // Send the notification
-    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), 0x00000000, uintptr(unsafe.Pointer(&nid)))
+    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), 0x00000000, uintptr(unsafe.Pointer(nid)))
 
-	if success != 0 { return err }
+	fmt.Println(success, "-", nid)
+	if success != 1 { return err }
 	return err
 }
 
-func ErrorMessageBox(title string, message string) (err error) { //error in encoding (somehow)
+//unicode NULL in string will be changed to "<NULL>" (interpreted by windows as ""). 
+func ErrorMessageBox(title string, message string) (err error) {
+	const(
+		MB_OK = 0x00000000 //The message box contains one push button: OK. This is the default.
+		MB_ICONWARNING = 0x00000030 //An exclamation-point icon appears in the message box.
+		MB_SYSTEMMODAL = 0x00001000 //Same as MB_APPLMODAL except that the message box has the WS_EX_TOPMOST style. Use system-modal message boxes to notify the user of serious, potentially damaging errors that require immediate attention (for example, running out of memory). This flag has no effect on the user's ability to interact with windows other than those associated with hWnd.
+	)
 	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") }
 
-	utf16_title, err := syscall.UTF16PtrFromString(title)
+	safe_title := strings.Join(strings.Split(title, "\x00"), "<NULL>")
+	safe_message := strings.Join(strings.Split(message, "\x00"), "<NULL>")
+
+	utf16_title, err := syscall.UTF16PtrFromString(safe_title)
 	if err != nil { return err }
 
-	utf16_message, err := syscall.UTF16PtrFromString(message)
+	utf16_message, err := syscall.UTF16PtrFromString(safe_message)
 	if err != nil { return err }
 
-	fmt.Println(title, utf16_title, " -- ", message, utf16_message)
-
-	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000 | 0x00000030))
+	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16_message)), uintptr(unsafe.Pointer(utf16_title)), uintptr(MB_SYSTEMMODAL | MB_ICONWARNING | MB_OK))
 
 	if success == 0 { return err }
 	return nil
