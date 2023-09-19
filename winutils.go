@@ -158,8 +158,8 @@ func ErrorMessageNotification(message string) (err error) {
 	return err
 }
 
-func ErrorMessageBox(title string, message string) (err error) {
-	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") } //force a new push
+func ErrorMessageBox(title string, message string) (err error) { //error in encoding (somehow)
+	if procMessageBox == nil { procMessageBox = user32.MustFindProc("MessageBoxW") }
 
 	utf16_title, err := syscall.UTF16PtrFromString(title)
 	if err != nil { return err }
@@ -167,7 +167,9 @@ func ErrorMessageBox(title string, message string) (err error) {
 	utf16_message, err := syscall.UTF16PtrFromString(message)
 	if err != nil { return err }
 
-	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000))
+	fmt.Println(title, utf16_title, " -- ", message, utf16_message)
+
+	success, _, err := syscall.SyscallN(procMessageBox.Addr(), uintptr(0), uintptr(unsafe.Pointer(&utf16_message)), uintptr(unsafe.Pointer(&utf16_title)), uintptr(0x00001000 | 0x00000030))
 
 	if success == 0 { return err }
 	return nil
