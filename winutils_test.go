@@ -1,6 +1,7 @@
 package winutils_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/hexani-4/go-winutils"
@@ -8,6 +9,7 @@ import (
 
 const(
 	ErrorMessageBox = false
+	LoadErrIcon = false
 	ErrorMessageNotification = true
 )
 
@@ -27,6 +29,13 @@ func TestErrorMessageBox(t *testing.T) {
 			err := winutils.ErrorMessageBox(title, message)
 			if err != nil { t.Fatalf(err.Error()) }
 		}
+	}
+}
+
+func TestLoadErrIcon(* testing.T) {
+	if LoadErrIcon {
+		hIcon, err := winutils.LoadErrIcon()
+		fmt.Println(hIcon, err)
 	}
 }
 

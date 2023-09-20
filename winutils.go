@@ -26,32 +26,9 @@ var(
 	procIsWindow          *syscall.Proc
 	procMessageBox        *syscall.Proc
 	procShell_NotifyIconW *syscall.Proc
+	procLoadImageW        *syscall.Proc
+	procCreateWindowExW   *syscall.Proc
 )
-
-/*
-DWORD cbSize;
-  HWND  hWnd;
-  UINT  uID;
-  UINT  uFlags;
-  UINT  uCallbackMessage;
-  HICON hIcon;
-#if ...
-  CHAR  szTip[64];
-#else
-  CHAR  szTip[128];
-#endif
-  DWORD dwState;
-  DWORD dwStateMask;
-  CHAR  szInfo[256];
-  union {
-    UINT uTimeout;
-    UINT uVersion;
-  } DUMMYUNIONNAME;
-  CHAR  szInfoTitle[64];
-  DWORD dwInfoFlags;
-  GUID  guidItem;
-  HICON hBalloonIcon;
-*/
 
 type NOTIFYICONDATA struct {
     CbSize           uint32 //The size of this structure, in bytes. 
@@ -68,7 +45,7 @@ type NOTIFYICONDATA struct {
 	UVersion         uint32 //Deprecated. 
     SzInfoTitle      [64]uint16 //Windows 2000 and later. A null-terminated string that specifies a title for a balloon notification. This title appears in a larger font immediately above the text. It can have a maximum of 64 characters, including the terminating null character, but should be restricted to 48 characters in English to accommodate localization. 
     DwInfoFlags      uint32 //Windows 2000 and later. Flags that can be set to modify the behavior and appearance of a balloon notification. The icon is placed to the left of the title. If the szInfoTitle member is zero-length, the icon is not shown. 
-    GuidItem         syscall.GUID //Windows 7 and later: A registered GUID that identifies the icon. This value overrides uID and is the recommended method of identifying the icon. The NIF_GUID flag must be set in the uFlags member. 
+    GuidItem         uint32 //Windows 7 and later: A registered GUID that identifies the icon. This value overrides uID and is the recommended method of identifying the icon. The NIF_GUID flag must be set in the uFlags member. 
     HBalloonIcon     syscall.Handle //Windows Vista and later. The handle of a customized notification icon provided by the application that should be used independently of the notification area icon. If this member is non-NULL and the NIIF_USER flag is set in the dwInfoFlags member, this icon is used as the notification icon. If this member is NULL, the legacy behavior is carried out. 
 }
 
@@ -99,6 +76,41 @@ type SIZE_RECT struct {
 	Height uint32 //Height
 }
 
+func PrintLastError() { //TODO: you know hwat...
+
+
+
+}
+
+func MakeIntResource(id uintptr) *uint16 {
+	return (*uint16)(unsafe.Pointer(id))
+}
+
+//Will limit the string's char count to m_length - 1 (space for NULL char), will end the string at the first occurence of a NULL char.
+func SafeUTF16PtrFromString(str string, m_length uint) (*uint16) {
+	var safe_str string
+	var was_bad bool
+	for i, c := range str {
+		if (c == '\x00') || (uint(i) == m_length - 1) { safe_str = str[:i]; was_bad = true }
+	}
+	if !was_bad { safe_str = str }
+
+	utf16_ptr, _ := syscall.UTF16PtrFromString(safe_str)
+	return utf16_ptr
+}
+
+//Will limit the string's char count to m_length - 1 (space for NULL char), will end the string at the first occurence of a NULL char.
+func SafeUTF16FromString(str string, m_length uint) ([]uint16) {
+	var safe_str string
+	var was_bad bool
+	for i, c := range str {
+		if (c == '\x00') || (uint(i) == m_length - 1) { safe_str = str[:i]; was_bad = true }
+	}
+	if !was_bad { safe_str = str }
+
+	utf16_str, _ := syscall.UTF16FromString(safe_str)
+	return utf16_str
+}
 
 func GetWindowInfo(hwnd syscall.Handle) (w_info WINDOWINFO, err error) {
 	if procGetWindowInfo == nil { procGetWindowInfo = user32.MustFindProc("GetWindowInfo") }
@@ -150,25 +162,72 @@ func SetWindowPos(hwnd syscall.Handle, rect SIZE_RECT) (err error) {
 	return nil
 }
 
+func LoadErrIcon() (hIcon uintptr, err error) {
+	if procLoadImageW == nil { procLoadImageW = user32.MustFindProc("LoadImageW") }
+
+	const (
+		IDI_QUESTION = 32514
+		LR_DEFAULTSIZE = 0x00000040
+		LR_SHARED = 0x00008000
+		IMAGE_ICON = 0x00000001
+	)
+
+	hIcon, _, err = syscall.SyscallN(procLoadImageW.Addr(), uintptr(0), uintptr(unsafe.Pointer(MakeIntResource(IDI_QUESTION))), uintptr(IMAGE_ICON), uintptr(0), uintptr(0), uintptr(LR_DEFAULTSIZE | LR_SHARED))
+	
+	if hIcon == 0 { return hIcon, err }
+	return hIcon, nil
+}
+
+//Creates a Message-only window (a window without a graphical representation). It is your responsibility to destroy this window. 
+func CreateMessageWindow(window_name string) (hWnd syscall.Handle, err error) {
+	if procCreateWindowExW == nil { procCreateWindowExW = user32.MustFindProc("CreateWindowExW") }
+
+	const HWND_MESSAGE uint32 = (^uint32(0)) - 2
+	
+	utf16_Message := SafeUTF16PtrFromString("STATIC", 16)
+	utf16_wn := SafeUTF16PtrFromString(window_name, 64)
+
+	hWnd_uintptr, _, err := syscall.SyscallN(procCreateWindowExW.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16_Message)), uintptr(unsafe.Pointer(utf16_wn)), uintptr(0), uintptr(0), uintptr(10), uintptr(10), uintptr(0), uintptr(HWND_MESSAGE), uintptr(0))
+	
+	if hWnd_uintptr == 0 { return syscall.Handle(0), err }
+	return syscall.Handle(hWnd_uintptr), nil
+}
+
 func ErrorMessageNotification(message string) (err error) {
-
-
 	if procShell_NotifyIconW == nil { procShell_NotifyIconW = shell32.MustFindProc("Shell_NotifyIconW") }
 
-	// Initialize NOTIFYICONDATA
-    nid := &NOTIFYICONDATA{}
-    nid.CbSize = uint32(unsafe.Sizeof(nid))
-    nid.HWnd = syscall.Handle(0)
-    nid.UID = 1 // Unique ID for the notification
-    nid.DwInfoFlags = 0x00000010
-    nid.GuidItem = syscall.GUID{}
-    nid.HIcon = 0
-    nid.SzTip = [128]uint16{}
-    nid.DwState = 0
-    nid.DwStateMask = 0
-    nid.SzInfoTitle = [64]uint16{}
-    nid.SzInfo = [256]uint16{}
-    nid.DwInfoFlags |= 0x00000004 // NIIF_USER
+	const(
+		NIF_INFO = 0x00000010 //To display the balloon notification, specify NIF_INFO and provide text in szInfo. To remove a balloon notification, specify NIF_INFO and provide an empty string through szInfo. To add a notification area icon without displaying a notification, do not set the NIF_INFO flag. 
+		NIS_SHAREDICON = 0x00000002 //The icon resource is shared between multiple icons. 
+		NIIF_WARNING = 0x00000002 //A warning icon. 
+		NIIF_USER = 0x00000004 //Windows Vista and later: Use the icon identified in hBalloonIcon as the notification balloon's title icon. 
+
+	)
+
+	hIcon_uintptr, err := LoadErrIcon()
+	fmt.Println("LoadIcon - ", err)
+	hIcon := syscall.Handle(hIcon_uintptr)
+
+	p_window, err := CreateMessageWindow("tetete")
+	fmt.Println("CreateWindow - ", err)
+
+	nid := &NOTIFYICONDATA{}
+		nid.CbSize = uint32(unsafe.Sizeof(nid))
+	    nid.HWnd = p_window
+		nid.UID = 1
+		nid.UFlags = NIF_INFO
+		nid.UCallbackMessage = 0x8000 + 0x0001
+		nid.HIcon = hIcon
+		//nid.SzTip is added later
+		nid.DwState |= NIIF_WARNING
+		//nid.DwStateMask is left at 0
+		//nid.SzInfo is added later
+		nid.UTimeout = 1 //deprecated
+		nid.UVersion = 1 //deprecated
+		//nid.SzInfoTitle is added later
+		nid.DwInfoFlags |= NIIF_WARNING
+		nid.GuidItem = 1
+		nid.HBalloonIcon = hIcon
 
     // Set the tooltip (notification title) and info (notification message)
 	utf16_title, err := syscall.UTF16FromString("TestTitle")
@@ -177,16 +236,14 @@ func ErrorMessageNotification(message string) (err error) {
 	utf16_message, err := syscall.UTF16FromString(message)
 	if err != nil { return err }
 
-	for i, c := range utf16_title {
-		nid.SzInfoTitle[min(i, 63)] = c
-	}
-	
-	for i, c := range utf16_message {
-		nid.SzInfoTitle[min(i, 255)] = c
-	}
+	copy(nid.SzTip[:], utf16_title) //watch out, have to change this, this is a fatal err waiting to happen
+	copy(nid.SzInfoTitle[:], utf16_title)
+	copy(nid.SzInfo[:], utf16_message)
+
+	nid.CbSize = uint32(unsafe.Sizeof(nid))
 
     // Send the notification
-    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), 0x00000000, uintptr(unsafe.Pointer(nid)))
+    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), uintptr(0), uintptr(unsafe.Pointer(nid)))
 
 	fmt.Println(success, "-", nid)
 	if success != 1 { return err }
