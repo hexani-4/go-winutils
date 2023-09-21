@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -28,6 +29,7 @@ var(
 	procShell_NotifyIconW *syscall.Proc
 	procLoadImageW        *syscall.Proc
 	procCreateWindowExW   *syscall.Proc
+	
 )
 
 type NOTIFYICONDATA struct {
@@ -74,12 +76,6 @@ type SIZE_RECT struct {
     Y    uint32 //Distance from the top edge of the screen
 	Width uint32 //Width
 	Height uint32 //Height
-}
-
-func PrintLastError() { //TODO: you know hwat...
-
-
-
 }
 
 func MakeIntResource(id uintptr) *uint16 {
@@ -178,29 +174,45 @@ func LoadErrIcon() (hIcon uintptr, err error) {
 	return hIcon, nil
 }
 
-//Creates a Message-only window (a window without a graphical representation). It is your responsibility to destroy this window. 
+//Creates an invisible window (a window without a user-visible graphical representation). It is your responsibility to destroy this window. 
 func CreateMessageWindow(window_name string) (hWnd syscall.Handle, err error) {
 	if procCreateWindowExW == nil { procCreateWindowExW = user32.MustFindProc("CreateWindowExW") }
 
-	const HWND_MESSAGE uint32 = (^uint32(0)) - 2
+	const (
+		HWND_MESSAGE uint32 = (^uint32(0)) - 2
+		WS_EX_NOREDIRECTIONBITMAP = 0x00200000
+		WS_EX_TOOLWINDOW = 0x00000080
+	)
 	
-	utf16_Message := SafeUTF16PtrFromString("STATIC", 16)
-	utf16_wn := SafeUTF16PtrFromString(window_name, 64)
+	utf16_wclass := SafeUTF16PtrFromString("STATIC", 16) //this is not good, should make my own window class
+	utf16_wname := SafeUTF16PtrFromString(window_name, 64)
 
-	hWnd_uintptr, _, err := syscall.SyscallN(procCreateWindowExW.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16_Message)), uintptr(unsafe.Pointer(utf16_wn)), uintptr(0), uintptr(0), uintptr(10), uintptr(10), uintptr(0), uintptr(HWND_MESSAGE), uintptr(0))
+	hWnd_uintptr, _, err := syscall.SyscallN(procCreateWindowExW.Addr(), uintptr(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP), uintptr(unsafe.Pointer(utf16_wclass)), uintptr(unsafe.Pointer(utf16_wname)), uintptr(0), uintptr(0), uintptr(0), uintptr(10), uintptr(10), uintptr(0) /*HWND_MESSAGE*/, uintptr(0), uintptr(0), uintptr(0))
 	
 	if hWnd_uintptr == 0 { return syscall.Handle(0), err }
 	return syscall.Handle(hWnd_uintptr), nil
 }
 
-func ErrorMessageNotification(message string) (err error) {
+func ErrorMessageNotification(message string, duration uint32) (err error) { //broken, need to destroy window after use, make icon exist untill clicked! TODO:
 	if procShell_NotifyIconW == nil { procShell_NotifyIconW = shell32.MustFindProc("Shell_NotifyIconW") }
 
 	const(
+		NIM_ADD = 0x00000000
+		NIM_MODIFY = 0x00000001
+		NIM_DELETE = 0x00000002
+
+		NIF_SHOWTIP = 0x00000080 //Windows Vista and later. Use the standard tooltip. 
+		NIF_GUID = 0x00000020 //Windows 7 and later: The guidItem is valid. 
 		NIF_INFO = 0x00000010 //To display the balloon notification, specify NIF_INFO and provide text in szInfo. To remove a balloon notification, specify NIF_INFO and provide an empty string through szInfo. To add a notification area icon without displaying a notification, do not set the NIF_INFO flag. 
+		NIF_STATE = 0x00000008 //The dwState and dwStateMask members are valid. 
+		NIF_TIP = 0x00000004 //The szTip member is valid. 
+		NIF_ICON = 0x00000002 //The hIcon member is valid. 
+		NIF_MESSAGE = 0x00000001 //The uCallbackMessage member is valid. 
+
 		NIS_SHAREDICON = 0x00000002 //The icon resource is shared between multiple icons. 
+		NIS_HIDDEN = 0x00000001 //The icon is hidden.
 		NIIF_WARNING = 0x00000002 //A warning icon. 
-		NIIF_USER = 0x00000004 //Windows Vista and later: Use the icon identified in hBalloonIcon as the notification balloon's title icon. 
+		NIIF_USER = 0x00000004 //Windows Vista and later: Use the icon identified in hBalloonIcon as the notification balloon's title icon.
 
 	)
 
@@ -208,46 +220,51 @@ func ErrorMessageNotification(message string) (err error) {
 	fmt.Println("LoadIcon - ", err)
 	hIcon := syscall.Handle(hIcon_uintptr)
 
-	p_window, err := CreateMessageWindow("tetete")
+	p_window, err := CreateMessageWindow("errwin")
 	fmt.Println("CreateWindow - ", err)
 
 	nid := &NOTIFYICONDATA{}
 		nid.CbSize = uint32(unsafe.Sizeof(nid))
 	    nid.HWnd = p_window
 		nid.UID = 1
-		nid.UFlags = NIF_INFO
+		nid.UFlags |= NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP | NIF_INFO
 		nid.UCallbackMessage = 0x8000 + 0x0001
 		nid.HIcon = hIcon
 		//nid.SzTip is added later
-		nid.DwState |= NIIF_WARNING
-		//nid.DwStateMask is left at 0
+		nid.DwState |= NIS_SHAREDICON
+		nid.DwStateMask |= NIS_SHAREDICON
 		//nid.SzInfo is added later
-		nid.UTimeout = 1 //deprecated
-		nid.UVersion = 1 //deprecated
+		nid.UTimeout = duration //deprecated
+		nid.UVersion = duration //deprecated
 		//nid.SzInfoTitle is added later
-		nid.DwInfoFlags |= NIIF_WARNING
+		nid.DwInfoFlags |= NIIF_USER
 		nid.GuidItem = 1
 		nid.HBalloonIcon = hIcon
 
-    // Set the tooltip (notification title) and info (notification message)
-	utf16_title, err := syscall.UTF16FromString("TestTitle")
-	if err != nil { return err }
+	// Set the tooltip (notification title) and info (notification message)
+	utf16_message := SafeUTF16FromString(message, 200)
 
-	utf16_message, err := syscall.UTF16FromString(message)
-	if err != nil { return err }
-
-	copy(nid.SzTip[:], utf16_title) //watch out, have to change this, this is a fatal err waiting to happen
-	copy(nid.SzInfoTitle[:], utf16_title)
-	copy(nid.SzInfo[:], utf16_message)
+    for i, c := range utf16_message {
+		nid.SzTip[min(i, 127)] = c
+		nid.SzInfoTitle[min(i, 63)] = c
+		nid.SzInfo[min(i, 255)] = c
+	}
 
 	nid.CbSize = uint32(unsafe.Sizeof(nid))
 
-    // Send the notification
-    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), uintptr(0), uintptr(unsafe.Pointer(nid)))
+    // Add systray icon
+    success, _, err := syscall.SyscallN(procShell_NotifyIconW.Addr(), uintptr(NIM_ADD), uintptr(unsafe.Pointer(nid)))
+	fmt.Println("Added icon - ", success, "\n        - ", err) 
+	if success != 1 { fmt.Println(success); return err }
 
-	fmt.Println(success, "-", nid)
-	if success != 1 { return err }
-	return err
+	time.Sleep(time.Duration(duration) * time.Millisecond)
+
+	//Delete systray icon
+	success, _, err = syscall.SyscallN(procShell_NotifyIconW.Addr(), uintptr(NIM_DELETE), uintptr(unsafe.Pointer(nid)))
+	fmt.Println("Deleted icon - ", success, "\n        - ", err) 
+	if success != 1 { fmt.Println(success); return err }
+
+	return nil
 }
 
 //unicode NULL in string will be changed to "<NULL>" (interpreted by windows as ""). 

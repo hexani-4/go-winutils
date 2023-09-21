@@ -41,9 +41,12 @@ func TestLoadErrIcon(* testing.T) {
 
 func TestErrorMessageNotification(t *testing.T) {
 	if ErrorMessageNotification{
+	
+		i := uint32(2000)
 		for _, message := range text_tc {
-			err := winutils.ErrorMessageNotification(message)
+			err := winutils.ErrorMessageNotification(message, i)
 			if err != nil { t.Fatalf(err.Error()) }
+			i -= 250
 		}
     }
 }
