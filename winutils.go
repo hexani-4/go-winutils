@@ -25,10 +25,14 @@ var(
 	procGetWindowInfo     *syscall.Proc
 	procGetWindowRect     *syscall.Proc
 	procIsWindow          *syscall.Proc
+	procDestroyWindow     *syscall.Proc
 	procMessageBox        *syscall.Proc
 	procShell_NotifyIconW *syscall.Proc
 	procLoadImageW        *syscall.Proc
 	procCreateWindowExW   *syscall.Proc
+
+	E_messwindow syscall.Handle
+	e_messid uint32
 	
 )
 
@@ -162,44 +166,46 @@ func LoadErrIcon() (hIcon uintptr, err error) {
 	if procLoadImageW == nil { procLoadImageW = user32.MustFindProc("LoadImageW") }
 
 	const (
-		IDI_QUESTION = 32514
+		IDI_WARNING = 32515
 		LR_DEFAULTSIZE = 0x00000040
 		LR_SHARED = 0x00008000
 		IMAGE_ICON = 0x00000001
 	)
 
-	hIcon, _, err = syscall.SyscallN(procLoadImageW.Addr(), uintptr(0), uintptr(unsafe.Pointer(MakeIntResource(IDI_QUESTION))), uintptr(IMAGE_ICON), uintptr(0), uintptr(0), uintptr(LR_DEFAULTSIZE | LR_SHARED))
+	hIcon, _, err = syscall.SyscallN(procLoadImageW.Addr(), uintptr(0), uintptr(unsafe.Pointer(MakeIntResource(IDI_WARNING))), uintptr(IMAGE_ICON), uintptr(0), uintptr(0), uintptr(LR_DEFAULTSIZE | LR_SHARED))
 	
 	if hIcon == 0 { return hIcon, err }
 	return hIcon, nil
 }
 
-//Creates an invisible window (a window without a user-visible graphical representation). It is your responsibility to destroy this window. 
+//Creates a Message-only window (a window without a user-visible graphical representation). It is your responsibility to destroy this window. 
 func CreateMessageWindow(window_name string) (hWnd syscall.Handle, err error) {
 	if procCreateWindowExW == nil { procCreateWindowExW = user32.MustFindProc("CreateWindowExW") }
 
 	const (
-		HWND_MESSAGE uint32 = (^uint32(0)) - 2
-		WS_EX_NOREDIRECTIONBITMAP = 0x00200000
-		WS_EX_TOOLWINDOW = 0x00000080
+		HWND_MESSAGE uint = (^uint(0)) - 2
 	)
 	
 	utf16_wclass := SafeUTF16PtrFromString("STATIC", 16) //this is not good, should make my own window class
 	utf16_wname := SafeUTF16PtrFromString(window_name, 64)
 
-	hWnd_uintptr, _, err := syscall.SyscallN(procCreateWindowExW.Addr(), uintptr(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP), uintptr(unsafe.Pointer(utf16_wclass)), uintptr(unsafe.Pointer(utf16_wname)), uintptr(0), uintptr(0), uintptr(0), uintptr(10), uintptr(10), uintptr(0) /*HWND_MESSAGE*/, uintptr(0), uintptr(0), uintptr(0))
+	hWnd_uintptr, _, err := syscall.SyscallN(procCreateWindowExW.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16_wclass)), uintptr(unsafe.Pointer(utf16_wname)), uintptr(0), uintptr(0), uintptr(0), uintptr(10), uintptr(10), uintptr(HWND_MESSAGE), uintptr(0), uintptr(0), uintptr(0))
 	
 	if hWnd_uintptr == 0 { return syscall.Handle(0), err }
 	return syscall.Handle(hWnd_uintptr), nil
 }
 
-func ErrorMessageNotification(message string, duration uint32) (err error) { //broken, need to destroy window after use, make icon exist untill clicked! TODO:
+//Creates a window (E_messwindow) that is never detroyed. Yes, this is bad.
+func ErrorNotifyIcon(message string, duration uint32) (err error) { //broken, need to destroy window after use, make icon exist untill clicked! TODO:
 	if procShell_NotifyIconW == nil { procShell_NotifyIconW = shell32.MustFindProc("Shell_NotifyIconW") }
+	if procDestroyWindow == nil { procDestroyWindow = user32.MustFindProc("DestroyWindow")}
 
 	const(
 		NIM_ADD = 0x00000000
 		NIM_MODIFY = 0x00000001
 		NIM_DELETE = 0x00000002
+		NIM_SETFOCUS = 0x00000003
+		NIM_SETVERSION = 0x00000004
 
 		NIF_SHOWTIP = 0x00000080 //Windows Vista and later. Use the standard tooltip. 
 		NIF_GUID = 0x00000020 //Windows 7 and later: The guidItem is valid. 
@@ -220,25 +226,29 @@ func ErrorMessageNotification(message string, duration uint32) (err error) { //b
 	fmt.Println("LoadIcon - ", err)
 	hIcon := syscall.Handle(hIcon_uintptr)
 
-	p_window, err := CreateMessageWindow("errwin")
-	fmt.Println("CreateWindow - ", err)
+	if E_messwindow == syscall.Handle(0) {
+		E_messwindow, err = CreateMessageWindow("errwin")
+		fmt.Println("CreateWindow - ", err)
+	}
+
+	e_messid++
 
 	nid := &NOTIFYICONDATA{}
 		nid.CbSize = uint32(unsafe.Sizeof(nid))
-	    nid.HWnd = p_window
-		nid.UID = 1
-		nid.UFlags |= NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_SHOWTIP | NIF_INFO
-		nid.UCallbackMessage = 0x8000 + 0x0001
+	    nid.HWnd = E_messwindow
+		nid.UID = e_messid
+		nid.UFlags |= NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_GUID | NIF_SHOWTIP | NIF_INFO
+		nid.UCallbackMessage = 0x4000 + e_messid
 		nid.HIcon = hIcon
 		//nid.SzTip is added later
 		nid.DwState |= NIS_SHAREDICON
 		nid.DwStateMask |= NIS_SHAREDICON
 		//nid.SzInfo is added later
 		nid.UTimeout = duration //deprecated
-		nid.UVersion = duration //deprecated
+		nid.UVersion = 0 //deprecated
 		//nid.SzInfoTitle is added later
 		nid.DwInfoFlags |= NIIF_USER
-		nid.GuidItem = 1
+		nid.GuidItem = e_messid
 		nid.HBalloonIcon = hIcon
 
 	// Set the tooltip (notification title) and info (notification message)
@@ -261,11 +271,12 @@ func ErrorMessageNotification(message string, duration uint32) (err error) { //b
 
 	//Delete systray icon
 	success, _, err = syscall.SyscallN(procShell_NotifyIconW.Addr(), uintptr(NIM_DELETE), uintptr(unsafe.Pointer(nid)))
-	fmt.Println("Deleted icon - ", success, "\n        - ", err) 
-	if success != 1 { fmt.Println(success); return err }
+	if success != 1 { panic(err) }
+	fmt.Println("Deleted icon - ", success, "\n        - ", err)
 
 	return nil
 }
+
 
 //unicode NULL in string will be changed to "<NULL>" (interpreted by windows as ""). 
 func ErrorMessageBox(title string, message string) (err error) {
