@@ -13,6 +13,8 @@ const(
 	ZPos_NOTOPMOST uint = ^uint(0) - 1 //Places the window above all non-topmost windows (that is, behind all topmost windows). This flag has no effect if the window is already a non-topmost window.
 	ZPos_TOP uint       = 0 //Places the window at the top of the Z order.
 	ZPos_TOPMOST uint   = ^uint(0) //Places the window above all non-topmost windows. The window maintains its topmost position even when it is deactivated.
+
+	WS_EX_TOPMOST uint32 = 0x00000008 //Window extended style flag for topmost windows
 )
 
 var(
@@ -116,6 +118,7 @@ func GetWindowInfo(hwnd syscall.Handle) (w_info WINDOWINFO, err error) {
 	if procGetWindowInfo == nil { procGetWindowInfo = user32.MustFindProc("GetWindowInfo") }
 
 	var window_info WINDOWINFO
+	window_info.CbSize = uint32(unsafe.Sizeof(window_info))
 
 	success, _, err := syscall.SyscallN(procGetWindowInfo.Addr(), uintptr(hwnd), uintptr(unsafe.Pointer(&window_info)))
 
