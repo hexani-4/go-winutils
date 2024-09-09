@@ -9,6 +9,8 @@ import (
 )
 
 const (
+	null_replacement string = "{NULL}" //String used to replace \x00 in strings
+
 	ZPos_BOTTOM    uint = 1            //Places the window at the bottom of the Z order. If the hWnd parameter identifies a topmost window, the window loses its topmost status and is placed at the bottom of all other windows.
 	ZPos_NOTOPMOST uint = ^uint(0) - 1 //Places the window above all non-topmost windows (that is, behind all topmost windows). This flag has no effect if the window is already a non-topmost window.
 	ZPos_TOP       uint = 0            //Places the window at the top of the Z order.
@@ -21,8 +23,7 @@ var (
 	user32  = syscall.MustLoadDLL("user32.dll")
 	shell32 = syscall.MustLoadDLL("shell32.dll")
 
-	procEnumWindows       *syscall.Proc
-	procGetWindowTextW    *syscall.Proc
+	procFindWindowW       *syscall.Proc
 	procSetWindowPos      *syscall.Proc
 	procGetWindowInfo     *syscall.Proc
 	procGetWindowRect     *syscall.Proc
@@ -340,15 +341,15 @@ func ErrorMessageBox(title string, message string) (err error) {
 		procMessageBox = user32.MustFindProc("MessageBoxW")
 	}
 
-	safe_title := strings.Join(strings.Split(title, "\x00"), "<NULL>")
-	safe_message := strings.Join(strings.Split(message, "\x00"), "<NULL>")
+	nonull_title := strings.Join(strings.Split(title, "\x00"), null_replacement)
+	nonull_message := strings.Join(strings.Split(message, "\x00"), null_replacement)
 
-	utf16_title, err := syscall.UTF16PtrFromString(safe_title)
+	utf16_title, err := syscall.UTF16PtrFromString(nonull_title)
 	if err != nil {
 		return err
 	}
 
-	utf16_message, err := syscall.UTF16PtrFromString(safe_message)
+	utf16_message, err := syscall.UTF16PtrFromString(nonull_message)
 	if err != nil {
 		return err
 	}
@@ -362,13 +363,16 @@ func ErrorMessageBox(title string, message string) (err error) {
 }
 
 func FindWindow(title string) syscall.Handle {
-	findwindoww_proc := user32.MustFindProc("FindWindowW")
+	if procFindWindowW == nil {
+		procFindWindowW = user32.MustFindProc("FindWindowW")
+	}
 
-	utf16ptr, err := syscall.UTF16PtrFromString(title)
+	nonull_title := strings.Join(strings.Split(title, "\x00"), null_replacement)
+	utf16ptr_title, err := syscall.UTF16PtrFromString(nonull_title)
 	if err != nil {
 		return syscall.Handle(0)
 	}
 
-	hwnd, _, _ := syscall.SyscallN(findwindoww_proc.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16ptr)))
+	hwnd, _, _ := syscall.SyscallN(procFindWindowW.Addr(), uintptr(0), uintptr(unsafe.Pointer(utf16ptr_title)))
 	return syscall.Handle(hwnd)
 }
